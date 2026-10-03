@@ -42,323 +42,178 @@ st.set_page_config(
 
 
 # =========================================================
-# CUSTOM CSS
-# =========================================================
-
-st.markdown("""
-<style>
-
-.main {
-    padding-top: 10px;
-}
-
-.chat-header {
-    padding: 18px 22px;
-    border-radius: 16px;
-    border: 1px solid rgba(128,128,128,0.25);
-    margin-bottom: 20px;
-}
-
-.chat-header h1 {
-    margin: 0;
-    font-size: 30px;
-}
-
-.chat-header p {
-    margin-top: 6px;
-    opacity: 0.65;
-}
-
-.user-message {
-    padding: 12px 16px;
-    border-radius: 18px 18px 4px 18px;
-    margin: 8px 0 8px 20%;
-    border: 1px solid rgba(128,128,128,0.20);
-}
-
-.ai-message {
-    padding: 12px 16px;
-    border-radius: 18px 18px 18px 4px;
-    margin: 8px 20% 8px 0;
-    border: 1px solid rgba(128,128,128,0.20);
-}
-
-.small-text {
-    font-size: 13px;
-    opacity: 0.60;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# =========================================================
 # SESSION STATE
 # =========================================================
 
 if "df" not in st.session_state:
     st.session_state.df = None
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
 if "file_name" not in st.session_state:
-    st.session_state.file_name = None
+    st.session_state.file_name = ""
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
 
 # =========================================================
-# HELPER FUNCTIONS
+# CSS
+# =========================================================
+
+st.markdown(
+    """
+    <style>
+    .main-title {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 5px;
+    }
+
+    .subtitle {
+        opacity: 0.65;
+        margin-bottom: 20px;
+    }
+
+    .user-box {
+        padding: 12px 16px;
+        border-radius: 18px;
+        margin: 8px 0 8px 15%;
+        border: 1px solid rgba(128,128,128,0.25);
+    }
+
+    .assistant-box {
+        padding: 12px 16px;
+        border-radius: 18px;
+        margin: 8px 15% 8px 0;
+        border: 1px solid rgba(128,128,128,0.25);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
+# BASIC FUNCTIONS
 # =========================================================
 
 def normalize_text(text):
-    """
-    Convert different formats into comparable text.
-
-    Example:
-    Blood_Pressure
-    Blood Pressure
-    blood-pressure
-
-    become similar.
-    """
-
     text = str(text).strip().lower()
-
     text = text.replace("_", " ")
     text = text.replace("-", " ")
-
     text = re.sub(r"\s+", " ", text)
-
     return text
 
 
 def compact_text(text):
-    """
-    Remove spaces and symbols.
-    """
-
     text = normalize_text(text)
-
-    return re.sub(
-        r"[^a-z0-9]",
-        "",
-        text
-    )
+    return re.sub(r"[^a-z0-9]", "", text)
 
 
 def format_value(value):
-
     if pd.isna(value):
         return "Missing"
 
     if isinstance(value, (float, np.floating)):
-
         if np.isfinite(value):
-
-            return (
-                f"{value:.4f}"
-                .rstrip("0")
-                .rstrip(".")
-            )
+            return f"{value:.4f}".rstrip("0").rstrip(".")
 
     return str(value)
 
 
-def is_numeric(series):
+def numeric_values(series):
+    return pd.to_numeric(series, errors="coerce")
 
+
+def is_numeric_column(series):
     return pd.api.types.is_numeric_dtype(series)
 
 
-def numeric_series(series):
-
-    return pd.to_numeric(
-        series,
-        errors="coerce"
-    )
-
-
 # =========================================================
-# FIND COLUMN
+# COLUMN DETECTION
 # =========================================================
 
-def find_column_from_text(text, columns):
+def find_column(query, columns):
 
-    """
-    Dynamically detect actual CSV column.
+    query_normal = normalize_text(query)
+    query_compact = compact_text(query)
 
-    No fixed column names.
-    """
-
-    text_normal = normalize_text(text)
-    text_compact = compact_text(text)
-
-    # -----------------------------------------------------
-    # Exact normal match
-    # -----------------------------------------------------
-
-    for col in columns:
-
-        col_normal = normalize_text(col)
-
-        if col_normal == text_normal:
-            return col
-
-    # -----------------------------------------------------
-    # Exact compact match
-    # -----------------------------------------------------
-
-    for col in columns:
-
-        col_compact = compact_text(col)
-
-        if col_compact == text_compact:
-            return col
-
-    # -----------------------------------------------------
-    # Column inside query
-    # Longest first
-    # -----------------------------------------------------
-
-    matches = []
-
-    for col in columns:
-
-        col_normal = normalize_text(col)
-        col_compact = compact_text(col)
-
-        if col_normal in text_normal:
-            matches.append(col)
-
-        elif col_compact in text_compact:
-            matches.append(col)
-
-    if matches:
-
-        matches.sort(
-            key=lambda x: len(str(x)),
-            reverse=True
-        )
-
-        return matches[0]
-
-    return None
-
-
-# =========================================================
-# EXTRACT COLUMN
-# =========================================================
-
-def extract_column(query, columns):
-
-    """
-    Find the real CSV column name from a natural language query.
-    """
-
-    q_normal = normalize_text(query)
-    q_compact = compact_text(query)
-
-    # Longest column first
     sorted_columns = sorted(
         columns,
         key=lambda x: len(str(x)),
         reverse=True
     )
 
+    # Exact match
     for col in sorted_columns:
+        if normalize_text(col) == query_normal:
+            return col
 
+    # Compact exact match
+    for col in sorted_columns:
+        if compact_text(col) == query_compact:
+            return col
+
+    # Column exists inside query
+    for col in sorted_columns:
         col_normal = normalize_text(col)
         col_compact = compact_text(col)
 
-        # Exact phrase
-        if col_normal in q_normal:
-
+        if col_normal in query_normal:
             return col
 
-        # Compact form
-        if col_compact and col_compact in q_compact:
-
+        if col_compact in query_compact:
             return col
 
     return None
 
 
 # =========================================================
-# ROW NUMBER DETECTOR
+# ROW NUMBER DETECTION
 # =========================================================
 
-def extract_single_row_number(query):
+def get_single_row_number(query):
 
     q = normalize_text(query)
 
     patterns = [
-
-        # show 10 no row
         r"\bshow\s+(\d+)\s*(?:no|number|num)\s+row\b",
-
-        # show row 10
         r"\bshow\s+row\s+(\d+)\b",
-
-        # show row number 10
         r"\bshow\s+row\s+number\s+(\d+)\b",
-
-        # show 10th row
         r"\bshow\s+(\d+)(?:st|nd|rd|th)\s+row\b",
-
-        # 10 no row
         r"\b(\d+)\s*(?:no|number|num)\s+row\b",
-
-        # 10th row
         r"\b(\d+)(?:st|nd|rd|th)\s+row\b",
-
-        # row 10 information
-        r"\brow\s+(\d+)\s+(?:information|info|details?)\b",
-
-        # row number 10
+        r"\brow\s+(\d+)\s+information\b",
+        r"\brow\s+(\d+)\s+info\b",
         r"\brow\s+number\s+(\d+)\b"
     ]
 
     for pattern in patterns:
-
-        match = re.search(
-            pattern,
-            q
-        )
+        match = re.search(pattern, q)
 
         if match:
-
-            return int(
-                match.group(1)
-            )
+            return int(match.group(1))
 
     return None
 
 
 # =========================================================
-# ROW RANGE
+# ROW RANGE DETECTION
 # =========================================================
 
-def extract_row_range(query):
+def get_row_range(query):
 
     q = normalize_text(query)
 
     patterns = [
-
-        r"\b(?:show|display|give me)?\s*rows?\s+(\d+)\s*(?:to|-)\s*(\d+)",
-
-        r"\bshow\s+(\d+)\s*(?:to|-)\s*(\d+)\s+rows?",
-
-        r"\b(\d+)\s*(?:to|-)\s*(\d+)\s+rows?"
+        r"\bshow\s+rows?\s+(\d+)\s+(?:to|-)\s+(\d+)",
+        r"\brows?\s+(\d+)\s+(?:to|-)\s+(\d+)",
+        r"\bshow\s+(\d+)\s+(?:to|-)\s+(\d+)\s+rows?"
     ]
 
     for pattern in patterns:
-
-        match = re.search(
-            pattern,
-            q
-        )
+        match = re.search(pattern, q)
 
         if match:
-
             return (
                 int(match.group(1)),
                 int(match.group(2))
@@ -368,35 +223,40 @@ def extract_row_range(query):
 
 
 # =========================================================
-# DISPLAY FULL ROW
+# DISPLAY FUNCTIONS
 # =========================================================
 
-def display_full_row(
-    row,
-    row_number=None,
-    title="Complete Row Information"
-):
+def show_table(data, title=None, height=450):
 
-    st.markdown(
-        f"### 📌 {title}"
+    if title:
+        st.subheader(title)
+
+    st.dataframe(
+        data,
+        use_container_width=True,
+        height=height
     )
 
-    if row_number is not None:
 
-        st.caption(
-            f"Dataset Row Number: {row_number}"
-        )
+def show_full_row(data, row_number, title):
 
-    result = pd.DataFrame({
-        "Column": [
-            str(x)
-            for x in row.index
-        ],
-        "Value": [
-            format_value(x)
-            for x in row.values
-        ]
-    })
+    st.subheader(title)
+
+    st.caption(
+        f"Dataset row number: {row_number}"
+    )
+
+    row = data.iloc[row_number - 1]
+
+    result = pd.DataFrame(
+        {
+            "Column": list(row.index),
+            "Value": [
+                format_value(value)
+                for value in row.values
+            ]
+        }
+    )
 
     st.dataframe(
         result,
@@ -406,134 +266,113 @@ def display_full_row(
 
 
 # =========================================================
-# SHOW DATAFRAME
-# =========================================================
-
-def display_dataframe(
-    data,
-    message=None,
-    height=450
-):
-
-    if message:
-
-        st.markdown(
-            f"### 📊 {message}"
-        )
-
-    st.dataframe(
-        data,
-        use_container_width=True,
-        height=height
-    )
-
-
-# =========================================================
-# QUERY PROCESSOR
+# QUERY ENGINE
 # =========================================================
 
 def process_query(query, data):
 
-    query_original = query.strip()
-
-    q = normalize_text(
-        query_original
-    )
-
-    columns = list(
-        data.columns
-    )
-
-    # =====================================================
-    # EMPTY QUERY
-    # =====================================================
+    q = normalize_text(query)
+    columns = list(data.columns)
 
     if not q:
-
-        st.warning(
-            "Please write a question."
-        )
-
+        st.warning("Please enter a question.")
         return
 
 
     # =====================================================
-    # 1. SHOW ALL COLUMN NAMES
+    # ALL COLUMN NAMES
     # =====================================================
 
-    column_commands = [
-
+    all_column_commands = [
         "show all column name",
         "show all column names",
         "show all columns",
         "display all columns",
+        "display column names",
         "list all columns",
         "list columns",
-        "column names",
+        "show column names",
         "what are the columns",
         "what are all columns",
-        "give me all columns",
-        "show column names"
+        "give me all columns"
     ]
 
-    if any(
-        command in q
-        for command in column_commands
-    ):
+    if any(command in q for command in all_column_commands):
 
-        st.markdown(
-            "### 📋 All Column Names"
+        result = pd.DataFrame(
+            {
+                "No.": range(1, len(columns) + 1),
+                "Column Name": columns,
+                "Data Type": [
+                    str(data[col].dtype)
+                    for col in columns
+                ],
+                "Non-Null": [
+                    int(data[col].notna().sum())
+                    for col in columns
+                ],
+                "Missing": [
+                    int(data[col].isna().sum())
+                    for col in columns
+                ],
+                "Unique": [
+                    int(data[col].nunique())
+                    for col in columns
+                ]
+            }
         )
-
-        result = pd.DataFrame({
-
-            "No.": range(
-                1,
-                len(columns) + 1
-            ),
-
-            "Column Name": columns,
-
-            "Data Type": [
-                str(data[c].dtype)
-                for c in columns
-            ],
-
-            "Non-Null": [
-                int(data[c].notna().sum())
-                for c in columns
-            ],
-
-            "Missing": [
-                int(data[c].isna().sum())
-                for c in columns
-            ]
-        })
 
         st.success(
-            f"Total {len(columns)} columns found."
+            f"Found {len(columns)} columns."
         )
 
-        st.dataframe(
+        show_table(
             result,
-            use_container_width=True,
-            hide_index=True
+            "📋 All Column Names",
+            500
         )
 
         return
 
 
     # =====================================================
-    # 2. ROW RANGE
+    # SINGLE ROW
     # =====================================================
 
-    row_range = extract_row_range(
-        q
-    )
+    row_number = get_single_row_number(q)
+
+    if row_number is not None:
+
+        if row_number < 1 or row_number > len(data):
+
+            st.error(
+                f"Row {row_number} does not exist. "
+                f"Available rows: 1 to {len(data)}."
+            )
+
+            return
+
+        show_full_row(
+            data,
+            row_number,
+            f"📌 Row {row_number} - Complete Information"
+        )
+
+        return
+
+
+    # =====================================================
+    # ROW RANGE
+    # =====================================================
+
+    row_range = get_row_range(q)
 
     if row_range:
 
         start, end = row_range
+
+        if start > end:
+            start, end = end, start
 
         if start < 1:
             start = 1
@@ -549,59 +388,19 @@ def process_query(query, data):
 
             return
 
-        if start > end:
+        result = data.iloc[start - 1:end]
 
-            start, end = end, start
-
-        result = data.iloc[
-            start - 1:end
-        ]
-
-        display_dataframe(
+        show_table(
             result,
-            f"Rows {start} to {end}"
+            f"📋 Rows {start} to {end}",
+            500
         )
 
         return
 
 
     # =====================================================
-    # 3. SINGLE ROW
-    # =====================================================
-
-    row_number = extract_single_row_number(
-        q
-    )
-
-    if row_number is not None:
-
-        if (
-            row_number < 1
-            or row_number > len(data)
-        ):
-
-            st.error(
-                f"Row {row_number} does not exist. "
-                f"Available rows: 1 to {len(data)}."
-            )
-
-            return
-
-        row = data.iloc[
-            row_number - 1
-        ]
-
-        display_full_row(
-            row,
-            row_number,
-            f"Row {row_number} — Complete Information"
-        )
-
-        return
-
-
-    # =====================================================
-    # 4. FIRST N ROWS
+    # FIRST N ROWS
     # =====================================================
 
     match = re.search(
@@ -611,25 +410,20 @@ def process_query(query, data):
 
     if match:
 
-        n = int(
-            match.group(1)
-        )
+        n = int(match.group(1))
+        n = min(n, len(data))
 
-        n = min(
-            n,
-            len(data)
-        )
-
-        display_dataframe(
+        show_table(
             data.head(n),
-            f"First {n} Rows"
+            f"📋 First {n} Rows",
+            500
         )
 
         return
 
 
     # =====================================================
-    # 5. LAST N ROWS
+    # LAST N ROWS
     # =====================================================
 
     match = re.search(
@@ -639,25 +433,20 @@ def process_query(query, data):
 
     if match:
 
-        n = int(
-            match.group(1)
-        )
+        n = int(match.group(1))
+        n = min(n, len(data))
 
-        n = min(
-            n,
-            len(data)
-        )
-
-        display_dataframe(
+        show_table(
             data.tail(n),
-            f"Last {n} Rows"
+            f"📋 Last {n} Rows",
+            500
         )
 
         return
 
 
     # =====================================================
-    # 6. RANDOM N ROWS
+    # RANDOM N ROWS
     # =====================================================
 
     match = re.search(
@@ -667,31 +456,31 @@ def process_query(query, data):
 
     if match:
 
-        n = int(
-            match.group(1)
+        n = int(match.group(1))
+        n = min(n, len(data))
+
+        result = data.sample(
+            n=n,
+            random_state=None
         )
 
-        n = min(
-            n,
-            len(data)
-        )
-
-        display_dataframe(
-            data.sample(n=n),
-            f"Random {n} Rows"
+        show_table(
+            result,
+            f"🎲 Random {n} Rows",
+            500
         )
 
         return
 
 
     # =====================================================
-    # 7. DATASET QUESTIONS
+    # DATASET SIZE
     # =====================================================
 
     if (
         "how many rows" in q
-        or "number of rows" in q
         or "total rows" in q
+        or "number of rows" in q
         or "row count" in q
     ):
 
@@ -705,8 +494,8 @@ def process_query(query, data):
 
     if (
         "how many columns" in q
-        or "number of columns" in q
         or "total columns" in q
+        or "number of columns" in q
         or "column count" in q
     ):
 
@@ -719,7 +508,7 @@ def process_query(query, data):
 
 
     # =====================================================
-    # 8. MISSING VALUES
+    # MISSING
     # =====================================================
 
     if (
@@ -729,47 +518,46 @@ def process_query(query, data):
         or "null data" in q
     ):
 
-        missing = pd.DataFrame({
+        result = pd.DataFrame(
+            {
+                "Column": columns,
+                "Missing": [
+                    int(data[col].isna().sum())
+                    for col in columns
+                ]
+            }
+        )
 
-            "Column": columns,
-
-            "Missing": [
-                int(data[c].isna().sum())
-                for c in columns
-            ]
-        })
-
-        missing = missing[
-            missing["Missing"] > 0
+        result = result[
+            result["Missing"] > 0
         ]
 
-        if missing.empty:
+        if result.empty:
 
             st.success(
-                "No missing values found."
+                "There are no missing values."
             )
 
         else:
 
-            display_dataframe(
-                missing,
-                "Missing Values"
+            show_table(
+                result,
+                "⚠️ Missing Values"
             )
 
         return
 
 
     # =====================================================
-    # 9. DUPLICATES
+    # DUPLICATES
     # =====================================================
 
     if (
-        "duplicate rows" in q
+        "duplicate" in q
         or "duplicates" in q
-        or "duplicate data" in q
     ):
 
-        duplicate_data = data[
+        duplicates = data[
             data.duplicated(
                 keep=False
             )
@@ -777,13 +565,13 @@ def process_query(query, data):
 
         st.metric(
             "Duplicate Rows",
-            len(duplicate_data)
+            len(duplicates)
         )
 
-        if len(duplicate_data) > 0:
+        if not duplicates.empty:
 
-            display_dataframe(
-                duplicate_data,
+            show_table(
+                duplicates,
                 "Duplicate Rows"
             )
 
@@ -791,17 +579,17 @@ def process_query(query, data):
 
 
     # =====================================================
-    # 10. DETECT COLUMN
+    # FIND COLUMN
     # =====================================================
 
-    column = extract_column(
+    column = find_column(
         q,
         columns
     )
 
 
     # =====================================================
-    # 11. COLUMN COMMANDS
+    # COLUMN OPERATIONS
     # =====================================================
 
     if column:
@@ -810,192 +598,133 @@ def process_query(query, data):
 
 
         # =================================================
-        # SHOW COLUMN
+        # FIRST N COLUMN VALUES
         # =================================================
 
-        # Remove generic command words
-        command_words = [
-            "show",
-            "display",
-            "give me",
-            "get",
-            "what is",
-            "what are",
-            "tell me",
-            "please"
-        ]
-
-        cleaned_query = q
-
-        for word in command_words:
-
-            cleaned_query = cleaned_query.replace(
-                word,
-                ""
-            )
-
-        cleaned_query = cleaned_query.strip()
-
-
-        # =================================================
-        # FIRST N COLUMN DATA
-        # =================================================
-
-        first_match = re.search(
+        match = re.search(
             r"\bfirst\s+(\d+)\b",
             q
         )
 
         if (
-            first_match
+            match
             and "row" not in q
             and "rows" not in q
         ):
 
-            n = int(
-                first_match.group(1)
-            )
+            n = int(match.group(1))
+            n = min(n, len(data))
 
-            n = min(
-                n,
-                len(data)
-            )
+            result = data[[column]].head(n)
 
-            result = data[
-                [column]
-            ].head(n)
-
-            display_dataframe(
+            show_table(
                 result,
-                f"First {n} Values of `{column}`"
+                f"📋 First {n} Values of `{column}`"
             )
 
             return
 
 
         # =================================================
-        # LAST N COLUMN DATA
+        # LAST N COLUMN VALUES
         # =================================================
 
-        last_match = re.search(
+        match = re.search(
             r"\blast\s+(\d+)\b",
             q
         )
 
         if (
-            last_match
+            match
             and "row" not in q
             and "rows" not in q
         ):
 
-            n = int(
-                last_match.group(1)
-            )
+            n = int(match.group(1))
+            n = min(n, len(data))
 
-            n = min(
-                n,
-                len(data)
-            )
+            result = data[[column]].tail(n)
 
-            result = data[
-                [column]
-            ].tail(n)
-
-            display_dataframe(
+            show_table(
                 result,
-                f"Last {n} Values of `{column}`"
+                f"📋 Last {n} Values of `{column}`"
             )
 
             return
 
 
         # =================================================
-        # RANDOM N COLUMN DATA
+        # RANDOM N COLUMN VALUES
         # =================================================
 
-        random_match = re.search(
+        match = re.search(
             r"\brandom\s+(\d+)\b",
             q
         )
 
         if (
-            random_match
+            match
             and "row" not in q
             and "rows" not in q
         ):
 
-            n = int(
-                random_match.group(1)
-            )
+            n = int(match.group(1))
+            n = min(n, len(data))
 
-            n = min(
-                n,
-                len(data)
-            )
-
-            result = data[
-                [column]
-            ].sample(
+            result = data[[column]].sample(
                 n=n
             )
 
-            display_dataframe(
+            show_table(
                 result,
-                f"Random {n} Values of `{column}`"
+                f"🎲 Random {n} Values of `{column}`"
             )
 
             return
 
 
         # =================================================
-        # HIGHEST VALUE
+        # HIGHEST
         # =================================================
-
-        highest_words = [
-            "highest",
-            "maximum",
-            "max value",
-            "largest",
-            "highest value"
-        ]
 
         if any(
             word in q
-            for word in highest_words
+            for word in [
+                "highest",
+                "maximum",
+                "largest",
+                "max value",
+                "highest value"
+            ]
         ):
 
-            if not is_numeric(series):
+            if not is_numeric_column(series):
 
                 st.warning(
-                    f"`{column}` is not a numeric column."
+                    f"`{column}` is not numeric."
                 )
 
                 return
 
-            numeric = numeric_series(
-                series
-            )
+            values = numeric_values(series)
 
-            if numeric.dropna().empty:
+            if values.dropna().empty:
 
                 st.warning(
-                    f"No numeric data found in `{column}`."
+                    f"No numeric values found in `{column}`."
                 )
 
                 return
 
-            idx = numeric.idxmax()
+            index = values.idxmax()
 
-            highest_value = numeric.loc[idx]
+            highest = values.loc[index]
 
             st.metric(
                 f"Highest Value of {column}",
-                format_value(
-                    highest_value
-                )
+                format_value(highest)
             )
 
-            # Full row if information/details requested
             if any(
                 word in q
                 for word in [
@@ -1004,70 +733,63 @@ def process_query(query, data):
                     "details",
                     "detail",
                     "full row",
-                    "complete row",
-                    "complete information"
+                    "complete row"
                 ]
             ):
 
-                row_position = (
-                    data.index.get_loc(idx) + 1
+                position = (
+                    data.index.get_loc(index) + 1
                 )
 
-                display_full_row(
-                    data.loc[idx],
-                    row_position,
-                    f"Complete Row — Highest `{column}`"
+                show_full_row(
+                    data,
+                    position,
+                    f"🏆 Row with Highest `{column}`"
                 )
 
             return
 
 
         # =================================================
-        # LOWEST VALUE
+        # LOWEST
         # =================================================
-
-        lowest_words = [
-            "lowest",
-            "minimum",
-            "min value",
-            "smallest",
-            "lowest value"
-        ]
 
         if any(
             word in q
-            for word in lowest_words
+            for word in [
+                "lowest",
+                "minimum",
+                "smallest",
+                "min value",
+                "lowest value"
+            ]
         ):
 
-            if not is_numeric(series):
+            if not is_numeric_column(series):
 
                 st.warning(
-                    f"`{column}` is not a numeric column."
+                    f"`{column}` is not numeric."
                 )
 
                 return
 
-            numeric = numeric_series(
-                series
-            )
+            values = numeric_values(series)
 
-            if numeric.dropna().empty:
+            if values.dropna().empty:
 
                 st.warning(
-                    f"No numeric data found in `{column}`."
+                    f"No numeric values found in `{column}`."
                 )
 
                 return
 
-            idx = numeric.idxmin()
+            index = values.idxmin()
 
-            lowest_value = numeric.loc[idx]
+            lowest = values.loc[index]
 
             st.metric(
                 f"Lowest Value of {column}",
-                format_value(
-                    lowest_value
-                )
+                format_value(lowest)
             )
 
             if any(
@@ -1078,19 +800,18 @@ def process_query(query, data):
                     "details",
                     "detail",
                     "full row",
-                    "complete row",
-                    "complete information"
+                    "complete row"
                 ]
             ):
 
-                row_position = (
-                    data.index.get_loc(idx) + 1
+                position = (
+                    data.index.get_loc(index) + 1
                 )
 
-                display_full_row(
-                    data.loc[idx],
-                    row_position,
-                    f"Complete Row — Lowest `{column}`"
+                show_full_row(
+                    data,
+                    position,
+                    f"📉 Row with Lowest `{column}`"
                 )
 
             return
@@ -1104,10 +825,9 @@ def process_query(query, data):
             "average" in q
             or "avg" in q
             or "mean" in q
-            or "average value" in q
         ):
 
-            if not is_numeric(series):
+            if not is_numeric_column(series):
 
                 st.warning(
                     f"`{column}` is not numeric."
@@ -1115,11 +835,9 @@ def process_query(query, data):
 
                 return
 
-            numeric = numeric_series(
+            value = numeric_values(
                 series
-            )
-
-            value = numeric.mean()
+            ).mean()
 
             st.metric(
                 f"Average Value of {column}",
@@ -1135,7 +853,7 @@ def process_query(query, data):
 
         if "median" in q:
 
-            if not is_numeric(series):
+            if not is_numeric_column(series):
 
                 st.warning(
                     f"`{column}` is not numeric."
@@ -1143,7 +861,7 @@ def process_query(query, data):
 
                 return
 
-            value = numeric_series(
+            value = numeric_values(
                 series
             ).median()
 
@@ -1165,7 +883,7 @@ def process_query(query, data):
             or "total of" in q
         ):
 
-            if not is_numeric(series):
+            if not is_numeric_column(series):
 
                 st.warning(
                     f"`{column}` is not numeric."
@@ -1173,7 +891,7 @@ def process_query(query, data):
 
                 return
 
-            value = numeric_series(
+            value = numeric_values(
                 series
             ).sum()
 
@@ -1191,12 +909,12 @@ def process_query(query, data):
 
         if (
             "count" in q
-            or "how many" in q
+            or "how many values" in q
             or "number of values" in q
         ):
 
             st.metric(
-                f"Non-Missing Values of {column}",
+                f"Non-Missing Values in {column}",
                 int(series.notna().sum())
             )
 
@@ -1218,23 +936,101 @@ def process_query(query, data):
                 .unique()
             )
 
+            result = pd.DataFrame(
+                {
+                    column: unique_values
+                }
+            )
+
             st.success(
                 f"{len(unique_values)} unique values found."
             )
 
-            result = pd.DataFrame({
-
-                column:
-                    unique_values
-
-            })
-
-            display_dataframe(
+            show_table(
                 result,
-                f"Unique Values of `{column}`"
+                f"Unique Values of `{column}`",
+                500
             )
 
             return
+
+
+        # =================================================
+        # FILTER
+        # =================================================
+
+        filter_patterns = [
+            (
+                r"(?:greater than|more than|above|over)\s+(-?\d+(?:\.\d+)?)",
+                ">"
+            ),
+            (
+                r"(?:less than|below|under)\s+(-?\d+(?:\.\d+)?)",
+                "<"
+            ),
+            (
+                r"(?:equal to|equals)\s+(-?\d+(?:\.\d+)?)",
+                "=="
+            ),
+            (
+                r"(?:greater than or equal to|at least)\s+(-?\d+(?:\.\d+)?)",
+                ">="
+            ),
+            (
+                r"(?:less than or equal to|at most)\s+(-?\d+(?:\.\d+)?)",
+                "<="
+            )
+        ]
+
+        for pattern, operator in filter_patterns:
+
+            match = re.search(
+                pattern,
+                q
+            )
+
+            if match:
+
+                if not is_numeric_column(series):
+
+                    st.warning(
+                        f"`{column}` must be numeric."
+                    )
+
+                    return
+
+                number = float(
+                    match.group(1)
+                )
+
+                values = numeric_values(
+                    series
+                )
+
+                if operator == ">":
+                    mask = values > number
+
+                elif operator == "<":
+                    mask = values < number
+
+                elif operator == "==":
+                    mask = values == number
+
+                elif operator == ">=":
+                    mask = values >= number
+
+                else:
+                    mask = values <= number
+
+                result = data[mask]
+
+                show_table(
+                    result,
+                    f"`{column}` {operator} {number} — {len(result)} Rows",
+                    500
+                )
+
+                return
 
 
         # =================================================
@@ -1255,9 +1051,9 @@ def process_query(query, data):
                 ascending=False
             )
 
-            display_dataframe(
+            show_table(
                 result,
-                f"`{column}` Sorted Descending"
+                f"`{column}` - Descending"
             )
 
             return
@@ -1281,122 +1077,31 @@ def process_query(query, data):
                 ascending=True
             )
 
-            display_dataframe(
+            show_table(
                 result,
-                f"`{column}` Sorted Ascending"
+                f"`{column}` - Ascending"
             )
 
             return
 
 
         # =================================================
-        # GREATER / LESS / EQUAL
-        # =================================================
-
-        filter_patterns = [
-
-            (
-                r"(?:greater than|more than|above|over)\s+(-?\d+(?:\.\d+)?)",
-                ">"
-            ),
-
-            (
-                r"(?:less than|below|under)\s+(-?\d+(?:\.\d+)?)",
-                "<"
-            ),
-
-            (
-                r"(?:equal to|equals)\s+(-?\d+(?:\.\d+)?)",
-                "=="
-            ),
-
-            (
-                r"(?:greater than or equal to|at least)\s+(-?\d+(?:\.\d+)?)",
-                ">="
-            ),
-
-            (
-                r"(?:less than or equal to|at most)\s+(-?\d+(?:\.\d+)?)",
-                "<="
-            )
-        ]
-
-        for pattern, operator in filter_patterns:
-
-            match = re.search(
-                pattern,
-                q
-            )
-
-            if match:
-
-                if not is_numeric(series):
-
-                    st.warning(
-                        f"`{column}` must be numeric for this operation."
-                    )
-
-                    return
-
-                number = float(
-                    match.group(1)
-                )
-
-                numeric = numeric_series(
-                    series
-                )
-
-                if operator == ">":
-
-                    mask = numeric > number
-
-                elif operator == "<":
-
-                    mask = numeric < number
-
-                elif operator == "==":
-
-                    mask = numeric == number
-
-                elif operator == ">=":
-
-                    mask = numeric >= number
-
-                else:
-
-                    mask = numeric <= number
-
-                result = data[
-                    mask
-                ]
-
-                display_dataframe(
-                    result,
-                    f"{column} {operator} {number} — {len(result)} Rows"
-                )
-
-                return
-
-
-        # =================================================
         # COLUMN INFORMATION
         # =================================================
 
-        information_words = [
-            "information",
-            "info",
-            "details",
-            "detail",
-            "about"
-        ]
-
         if any(
             word in q
-            for word in information_words
+            for word in [
+                "information",
+                "info",
+                "details",
+                "detail",
+                "about"
+            ]
         ):
 
-            st.markdown(
-                f"### 📌 Information about `{column}`"
+            st.subheader(
+                f"📌 Information about `{column}`"
             )
 
             c1, c2, c3, c4 = st.columns(4)
@@ -1421,164 +1126,108 @@ def process_query(query, data):
                 int(series.nunique())
             )
 
-            if is_numeric(series):
+            if is_numeric_column(series):
 
-                numeric = numeric_series(
-                    series
-                )
+                values = numeric_values(series)
 
                 st.divider()
 
                 c1, c2, c3, c4, c5 = st.columns(5)
 
                 c1.metric(
-                    "Min",
-                    format_value(
-                        numeric.min()
-                    )
+                    "Minimum",
+                    format_value(values.min())
                 )
 
                 c2.metric(
-                    "Max",
-                    format_value(
-                        numeric.max()
-                    )
+                    "Maximum",
+                    format_value(values.max())
                 )
 
                 c3.metric(
                     "Average",
-                    format_value(
-                        numeric.mean()
-                    )
+                    format_value(values.mean())
                 )
 
                 c4.metric(
                     "Median",
-                    format_value(
-                        numeric.median()
-                    )
+                    format_value(values.median())
                 )
 
                 c5.metric(
                     "Sum",
-                    format_value(
-                        numeric.sum()
-                    )
+                    format_value(values.sum())
                 )
 
             return
 
 
         # =================================================
-        # DEFAULT SHOW COLUMN
+        # DEFAULT COLUMN DISPLAY
         # =================================================
 
-        # If user simply says:
-        # show Age
-        # show Product
-        # give me Revenue
-        # display ID
+        result = data[[column]]
 
-        if (
-            q.startswith("show ")
-            or q.startswith("display ")
-            or q.startswith("give me ")
-            or q.startswith("get ")
-            or q.startswith("what is ")
-            or q.startswith("what are ")
-            or q == normalize_text(column)
-        ):
-
-            result = data[
-                [column]
-            ]
-
-            display_dataframe(
-                result,
-                f"Full Data of `{column}`"
-            )
-
-            return
-
-
-        # =================================================
-        # DIRECT COLUMN NAME
-        # =================================================
-
-        result = data[
-            [column]
-        ]
-
-        display_dataframe(
+        show_table(
             result,
-            f"Data of `{column}`"
+            f"📋 Full Data of `{column}`",
+            500
         )
 
         return
 
 
     # =====================================================
-    # 12. GENERAL FALLBACK
+    # FALLBACK
     # =====================================================
 
     st.warning(
-        "I couldn't understand this command."
+        "I could not understand that command."
     )
 
-    st.markdown(
-        "### 💡 Try these formats"
+    st.info(
+        "Use the examples below."
     )
 
-    st.code("""
-show 10 no row
-show row 10
-show 10th row
-
-show 5 to 10 rows
-
-show first 10 rows
-show last 10 rows
-show random 10 rows
-
-show all column names
-
-show [column]
-show all [column]
-
-show first 10 [column]
-show last 10 [column]
-show random 10 [column]
-
-highest value of [column]
-lowest value of [column]
-average value of [column]
-median [column]
-sum [column]
-count [column]
-
-highest [column] information
-lowest [column] information
-
-show unique [column]
-
-[column] greater than 50
-[column] less than 50
-
-sort [column] ascending
-sort [column] descending
-""")
+    st.code(
+        "show 10 no row\n"
+        "show row 10\n"
+        "show 10th row\n"
+        "show 5 to 10 rows\n"
+        "show first 10 rows\n"
+        "show last 10 rows\n"
+        "show random 10 rows\n"
+        "show all column names\n"
+        "show [column]\n"
+        "show all [column]\n"
+        "show first 10 [column]\n"
+        "show last 10 [column]\n"
+        "show random 10 [column]\n"
+        "highest value of [column]\n"
+        "lowest value of [column]\n"
+        "average value of [column]\n"
+        "median [column]\n"
+        "sum [column]\n"
+        "count [column]\n"
+        "highest [column] information\n"
+        "lowest [column] information\n"
+        "[column] greater than 50\n"
+        "[column] less than 50\n"
+        "sort [column] ascending\n"
+        "sort [column] descending"
+    )
 
 
 # =========================================================
-# LOAD CSV
+# SIDEBAR
 # =========================================================
 
 with st.sidebar:
 
-    st.markdown("## 📂 Dataset")
+    st.header("📂 CSV Chat AI")
 
     uploaded_file = st.file_uploader(
-        "Upload CSV",
+        "Upload your CSV",
         type=["csv"]
     )
 
@@ -1586,82 +1235,139 @@ with st.sidebar:
 
         try:
 
-            df = pd.read_csv(
+            data = pd.read_csv(
                 uploaded_file
             )
 
-            # Clean column names
-            df.columns = [
-                str(c).strip()
-                for c in df.columns
+            data.columns = [
+                str(col).strip()
+                for col in data.columns
             ]
 
-            st.session_state.df = df
+            st.session_state.df = data
+            st.session_state.file_name = uploaded_file.name
 
-            if (
-                st.session_state.file_name
-                != uploaded_file.name
-            ):
-
-                st.session_state.chat_history = []
-
-                st.session_state.file_name = (
-                    uploaded_file.name
-                )
-
-        except Exception as e:
+        except Exception as error:
 
             st.error(
-                f"Could not read CSV: {e}"
+                f"CSV reading error: {error}"
             )
 
-            st.stop()
+    st.divider()
+
+    if st.session_state.df is not None:
+
+        current_data = st.session_state.df
+
+        st.write(
+            f"**File:** {st.session_state.file_name}"
+        )
+
+        st.write(
+            f"**Rows:** {len(current_data):,}"
+        )
+
+        st.write(
+            f"**Columns:** {len(current_data.columns):,}"
+        )
+
+        st.divider()
+
+        st.subheader("⚡ Quick Commands")
+
+        if st.button(
+            "📋 All Columns",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show all column names"
+            )
+
+        if st.button(
+            "🔟 Row 10",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show 10 no row"
+            )
+
+        if st.button(
+            "📊 First 10 Rows",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show first 10 rows"
+            )
+
+        if st.button(
+            "📊 Last 10 Rows",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show last 10 rows"
+            )
+
+        st.divider()
+
+        if st.button(
+            "🗑️ Clear Chat",
+            use_container_width=True
+        ):
+
+            st.session_state.messages = []
+
+            st.rerun()
 
 
 # =========================================================
-# MAIN
+# NO CSV
 # =========================================================
 
 if st.session_state.df is None:
 
-    st.markdown("""
-    ## 🤖 CSV Chat AI
+    st.markdown(
+        "<div class='main-title'>🤖 CSV Chat AI</div>",
+        unsafe_allow_html=True
+    )
 
-    Upload any CSV file and chat with your dataset.
+    st.markdown(
+        "<div class='subtitle'>Upload a CSV and chat with your dataset.</div>",
+        unsafe_allow_html=True
+    )
 
-    ### You can ask:
+    st.info(
+        "👈 Upload a CSV file from the sidebar."
+    )
 
-    - `show 10 no row`
-    - `show first 10 rows`
-    - `show all column names`
-    - `show all X`
-    - `show first 10 X`
-    - `show last 10 X`
-    - `show random 10 X`
-    - `highest value of X`
-    - `lowest value of X`
-    - `average value of X`
-    - `highest X information`
-    - `X greater than 50`
-    - `sort X descending`
+    st.markdown("### 💡 Example Commands")
 
-    **X automatically means the actual column name in your CSV.**
-    """)
+    st.code(
+        "show 10 no row\n"
+        "show first 10 rows\n"
+        "show last 10 rows\n"
+        "show all column names\n"
+        "show [column]\n"
+        "highest value of [column]\n"
+        "lowest value of [column]\n"
+        "average value of [column]\n"
+        "highest [column] information"
+    )
 
     st.stop()
 
 
 # =========================================================
-# DATA
+# DATA PREPARATION
 # =========================================================
 
 df = st.session_state.df.copy()
 
 
-# =========================================================
-# CONVERT NUMERIC-LOOKING COLUMNS
-# =========================================================
-
+# Convert numeric-looking object columns
 for col in df.columns:
 
     if df[col].dtype == "object":
@@ -1671,15 +1377,13 @@ for col in df.columns:
             errors="coerce"
         )
 
-        original_count = (
-            df[col].notna().sum()
-        )
+        original_non_null = df[col].notna().sum()
 
-        if original_count > 0:
+        if original_non_null > 0:
 
             ratio = (
                 converted.notna().sum()
-                / original_count
+                / original_non_null
             )
 
             if ratio >= 0.90:
@@ -1691,22 +1395,19 @@ for col in df.columns:
 # HEADER
 # =========================================================
 
-st.markdown("""
-<div class="chat-header">
+st.markdown(
+    "<div class='main-title'>🤖 CSV Chat AI</div>",
+    unsafe_allow_html=True
+)
 
-<h1>🤖 CSV Chat AI</h1>
-
-<p>
-Chat with your CSV • Ask questions • Explore rows •
-Analyze columns • Statistics • ML
-</p>
-
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    "<div class='subtitle'>Chat naturally with your CSV dataset</div>",
+    unsafe_allow_html=True
+)
 
 
 # =========================================================
-# TOP INFO
+# TOP METRICS
 # =========================================================
 
 c1, c2, c3, c4 = st.columns(4)
@@ -1736,7 +1437,7 @@ c4.metric(
 # TABS
 # =========================================================
 
-chat_tab, data_tab, visual_tab, ml_tab = st.tabs(
+chat_tab, dataset_tab, chart_tab, ml_tab = st.tabs(
     [
         "💬 Chat",
         "📊 Dataset",
@@ -1752,191 +1453,787 @@ chat_tab, data_tab, visual_tab, ml_tab = st.tabs(
 
 with chat_tab:
 
-    st.markdown(
-        "### 💬 Chat with your CSV"
+    st.subheader(
+        "💬 Chat with your CSV"
     )
 
     st.caption(
-        "Ask questions naturally using your actual CSV column names."
+        "Use the actual column names from your uploaded CSV."
     )
 
+    # -----------------------------------------------------
+    # Display chat history
+    # -----------------------------------------------------
 
-    # =====================================================
-    # CHAT HISTORY
-    # =====================================================
+    for message in st.session_state.messages:
 
-    for item in st.session_state.chat_history:
-
-        if item["role"] == "user":
+        if message["role"] == "user":
 
             st.markdown(
-                f"""
-                <div class="user-message">
-                <b>You</b><br>
-                {item["message"]}
-                </div>
-                """,
+                f"<div class='user-box'><b>👤 You</b><br>{message['text']}</div>",
                 unsafe_allow_html=True
             )
 
         else:
 
             st.markdown(
-                f"""
-                <div class="ai-message">
-                <b>🤖 CSV AI</b><br>
-                {item["message"]}
-                </div>
-                """,
+                f"<div class='assistant-box'><b>🤖 CSV AI</b><br>{message['text']}</div>",
                 unsafe_allow_html=True
             )
 
-            # Show result after message
-            if item.get("result") is not None:
 
-                if item["result_type"] == "dataframe":
+    # -----------------------------------------------------
+    # Quick examples
+    # -----------------------------------------------------
 
-                    st.dataframe(
-                        item["result"],
-                        use_container_width=True,
-                        height=400
-                    )
+    with st.expander(
+        "💡 Example Commands"
+    ):
 
-                elif item["result_type"] == "metric":
+        st.code(
+            "show 10 no row\n"
+            "show row 10\n"
+            "show 10th row\n"
+            "show 5 to 10 rows\n"
+            "show first 10 rows\n"
+            "show last 10 rows\n"
+            "show random 10 rows\n"
+            "show all column names\n"
+            "show X\n"
+            "show all X\n"
+            "show first 10 X\n"
+            "show last 10 X\n"
+            "show random 10 X\n"
+            "highest value of X\n"
+            "lowest value of X\n"
+            "average value of X\n"
+            "median X\n"
+            "sum X\n"
+            "count X\n"
+            "highest X information\n"
+            "lowest X information\n"
+            "show unique X\n"
+            "X greater than 50\n"
+            "X less than 50\n"
+            "sort X ascending\n"
+            "sort X descending"
+        )
 
-                    st.metric(
-                        item["title"],
-                        item["result"]
-                    )
+
+    # -----------------------------------------------------
+    # Quick buttons
+    # -----------------------------------------------------
+
+    q1, q2, q3, q4 = st.columns(4)
+
+    with q1:
+
+        if st.button(
+            "📋 All Columns",
+            key="chat_all_columns",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show all column names"
+            )
+
+    with q2:
+
+        if st.button(
+            "🔟 Row 10",
+            key="chat_row_10",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show 10 no row"
+            )
+
+    with q3:
+
+        if st.button(
+            "📊 First 10",
+            key="chat_first_10",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show first 10 rows"
+            )
+
+    with q4:
+
+        if st.button(
+            "📊 Last 10",
+            key="chat_last_10",
+            use_container_width=True
+        ):
+
+            st.session_state.quick_query = (
+                "show last 10 rows"
+            )
 
 
-    # =====================================================
-    # QUICK COMMANDS
-    # =====================================================
+    # -----------------------------------------------------
+    # Chat input
+    # -----------------------------------------------------
 
-    st.markdown(
-        "#### ⚡ Quick Commands"
+    typed_query = st.chat_input(
+        "Ask something about your CSV..."
     )
 
-    columns = list(
-        df.columns
+    quick_query = st.session_state.pop(
+        "quick_query",
+        None
     )
 
-    if columns:
+    final_query = typed_query
 
-        example_col = columns[0]
-
-        q1, q2, q3, q4 = st.columns(4)
-
-        with q1:
-
-            if st.button(
-                "📋 All Columns",
-                use_container_width=True
-            ):
-
-                st.session_state.pending_query = (
-                    "show all column names"
-                )
-
-        with q2:
-
-            if st.button(
-                "🔟 Row 10",
-                use_container_width=True
-            ):
-
-                st.session_state.pending_query = (
-                    "show 10 no row"
-                )
-
-        with q3:
-
-            if st.button(
-                "📊 First 10 Rows",
-                use_container_width=True
-            ):
-
-                st.session_state.pending_query = (
-                    "show first 10 rows"
-                )
-
-        with q4:
-
-            if st.button(
-                "📋 Show Column",
-                use_container_width=True
-            ):
-
-                st.session_state.pending_query = (
-                    f"show {example_col}"
-                )
+    if quick_query:
+        final_query = quick_query
 
 
-    # =====================================================
-    # CHAT INPUT
-    # =====================================================
+    # -----------------------------------------------------
+    # Process query
+    # -----------------------------------------------------
 
-    pending_query = st.session_state.get(
-        "pending_query",
-        ""
-    )
+    if final_query:
 
-    user_query = st.chat_input(
-        "Ask anything about your CSV..."
-    )
+        st.session_state.messages.append(
+            {
+                "role": "user",
+                "text": final_query
+            }
+        )
 
+        # Assistant placeholder
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "text": "I found the following result:"
+            }
+        )
 
-    if pending_query:
+        # Display current result
+        st.markdown(
+            f"<div class='user-box'><b>👤 You</b><br>{final_query}</div>",
+            unsafe_allow_html=True
+        )
 
-        user_query = pending_query
+        st.markdown(
+            "<div class='assistant-box'><b>🤖 CSV AI</b><br>I found the following result:</div>",
+            unsafe_allow_html=True
+        )
 
-        st.session_state.pending_query = ""
-
-
-    if user_query:
-
-        # Save user message
-        st.session_state.chat_history.append({
-            "role": "user",
-            "message": user_query
-        })
-
-        # AI message
-        st.session_state.chat_history.append({
-            "role": "assistant",
-            "message": "Here is what I found:"
-        })
-
-        # Process
         process_query(
-            user_query,
+            final_query,
             df
         )
 
-        # Rerun to display chat
-        st.rerun()
+
+# =========================================================
+# DATASET TAB
+# =========================================================
+
+with dataset_tab:
+
+    st.subheader(
+        "📊 Dataset Explorer"
+    )
+
+    preview_type = st.radio(
+        "Preview",
+        [
+            "First 10",
+            "Last 10",
+            "Random 10",
+            "All"
+        ],
+        horizontal=True
+    )
+
+    if preview_type == "First 10":
+
+        preview = df.head(10)
+
+    elif preview_type == "Last 10":
+
+        preview = df.tail(10)
+
+    elif preview_type == "Random 10":
+
+        preview = df.sample(
+            n=min(10, len(df))
+        )
+
+    else:
+
+        preview = df
+
+    st.dataframe(
+        preview,
+        use_container_width=True,
+        height=500
+    )
+
+    st.divider()
+
+    st.subheader(
+        "📋 Column Information"
+    )
+
+    information = pd.DataFrame(
+        {
+            "Column": df.columns,
+            "Data Type": [
+                str(df[col].dtype)
+                for col in df.columns
+            ],
+            "Total": [
+                len(df[col])
+                for col in df.columns
+            ],
+            "Non-Null": [
+                int(df[col].notna().sum())
+                for col in df.columns
+            ],
+            "Missing": [
+                int(df[col].isna().sum())
+                for col in df.columns
+            ],
+            "Unique": [
+                int(df[col].nunique())
+                for col in df.columns
+            ]
+        }
+    )
+
+    st.dataframe(
+        information,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    csv_data = df.to_csv(
+        index=False
+    ).encode("utf-8")
+
+    st.download_button(
+        "⬇️ Download CSV",
+        data=csv_data,
+        file_name="processed_dataset.csv",
+        mime="text/csv"
+    )
 
 
-    # =====================================================
-    # HELP
-    # =====================================================
+# =========================================================
+# VISUALIZATION TAB
+# =========================================================
 
-    with st.expander(
-        "💡 What can I ask?"
+with chart_tab:
+
+    st.subheader(
+        "📈 Visualization"
+    )
+
+    numeric_columns = (
+        df.select_dtypes(
+            include=np.number
+        )
+        .columns
+        .tolist()
+    )
+
+    if not numeric_columns:
+
+        st.warning(
+            "No numeric columns found."
+        )
+
+    else:
+
+        selected_column = st.selectbox(
+            "Select Numeric Column",
+            numeric_columns
+        )
+
+        chart_type = st.selectbox(
+            "Chart Type",
+            [
+                "Histogram",
+                "Box Plot",
+                "Line Chart"
+            ]
+        )
+
+        values = numeric_values(
+            df[selected_column]
+        ).dropna()
+
+        fig, ax = plt.subplots(
+            figsize=(10, 5)
+        )
+
+        if chart_type == "Histogram":
+
+            ax.hist(values)
+
+            ax.set_title(
+                f"Distribution of {selected_column}"
+            )
+
+            ax.set_xlabel(
+                selected_column
+            )
+
+            ax.set_ylabel(
+                "Frequency"
+            )
+
+        elif chart_type == "Box Plot":
+
+            ax.boxplot(values)
+
+            ax.set_title(
+                f"Box Plot of {selected_column}"
+            )
+
+            ax.set_ylabel(
+                selected_column
+            )
+
+        else:
+
+            ax.plot(values.values)
+
+            ax.set_title(
+                f"{selected_column} by Row"
+            )
+
+            ax.set_xlabel(
+                "Row Number"
+            )
+
+            ax.set_ylabel(
+                selected_column
+            )
+
+        st.pyplot(
+            fig,
+            clear_figure=True
+        )
+
+
+# =========================================================
+# MACHINE LEARNING TAB
+# =========================================================
+
+with ml_tab:
+
+    st.subheader(
+        "🤖 Machine Learning"
+    )
+
+    st.info(
+        "Select any column as target. "
+        "The system automatically detects classification or regression."
+    )
+
+    target_column = st.selectbox(
+        "🎯 Target Column",
+        df.columns,
+        key="target_column"
+    )
+
+    target = df[target_column]
+
+    unique_count = target.nunique(
+        dropna=True
+    )
+
+    if (
+        not is_numeric_column(target)
+        or unique_count <= 20
     ):
 
-        st.markdown("""
-### Row Questions
+        problem_type = "Classification"
 
-```text
-show 10 no row
-show row 10
-show 10th row
-show 10 no row information
+    else:
 
-show 5 to 10 rows
+        problem_type = "Regression"
 
-show first 10 rows
-show last 10 rows
-show random 10 rows
+    st.metric(
+        "Detected Problem",
+        problem_type
+    )
+
+
+    if st.button(
+        "🚀 Train Models",
+        type="primary",
+        use_container_width=True
+    ):
+
+        ml_data = df.dropna(
+            subset=[target_column]
+        ).copy()
+
+        if len(ml_data) < 10:
+
+            st.error(
+                "Not enough usable rows for ML."
+            )
+
+        else:
+
+            X = ml_data.drop(
+                columns=[target_column]
+            )
+
+            y = ml_data[target_column]
+
+            X = X.dropna(
+                axis=1,
+                how="all"
+            )
+
+            if X.shape[1] == 0:
+
+                st.error(
+                    "No usable feature columns found."
+                )
+
+            else:
+
+                numeric_features = (
+                    X.select_dtypes(
+                        include=np.number
+                    )
+                    .columns
+                    .tolist()
+                )
+
+                categorical_features = (
+                    X.select_dtypes(
+                        exclude=np.number
+                    )
+                    .columns
+                    .tolist()
+                )
+
+                transformers = []
+
+                if numeric_features:
+
+                    numeric_pipeline = Pipeline(
+                        steps=[
+                            (
+                                "imputer",
+                                SimpleImputer(
+                                    strategy="median"
+                                )
+                            ),
+                            (
+                                "scaler",
+                                StandardScaler()
+                            )
+                        ]
+                    )
+
+                    transformers.append(
+                        (
+                            "numeric",
+                            numeric_pipeline,
+                            numeric_features
+                        )
+                    )
+
+                if categorical_features:
+
+                    categorical_pipeline = Pipeline(
+                        steps=[
+                            (
+                                "imputer",
+                                SimpleImputer(
+                                    strategy="most_frequent"
+                                )
+                            ),
+                            (
+                                "encoder",
+                                OneHotEncoder(
+                                    handle_unknown="ignore"
+                                )
+                            )
+                        ]
+                    )
+
+                    transformers.append(
+                        (
+                            "categorical",
+                            categorical_pipeline,
+                            categorical_features
+                        )
+                    )
+
+                preprocessor = ColumnTransformer(
+                    transformers=transformers
+                )
+
+
+                # =========================================
+                # CLASSIFICATION
+                # =========================================
+
+                if problem_type == "Classification":
+
+                    if y.nunique() < 2:
+
+                        st.error(
+                            "Target must have at least two classes."
+                        )
+
+                    else:
+
+                        try:
+
+                            X_train, X_test, y_train, y_test = (
+                                train_test_split(
+                                    X,
+                                    y,
+                                    test_size=0.20,
+                                    random_state=42,
+                                    stratify=y
+                                )
+                            )
+
+                        except Exception:
+
+                            X_train, X_test, y_train, y_test = (
+                                train_test_split(
+                                    X,
+                                    y,
+                                    test_size=0.20,
+                                    random_state=42
+                                )
+                            )
+
+                        models = {
+                            "Logistic Regression":
+                                LogisticRegression(
+                                    max_iter=1000
+                                ),
+
+                            "Random Forest":
+                                RandomForestClassifier(
+                                    n_estimators=150,
+                                    random_state=42
+                                ),
+
+                            "Gradient Boosting":
+                                GradientBoostingClassifier(
+                                    random_state=42
+                                )
+                        }
+
+                        results = []
+
+                        for name, model in models.items():
+
+                            try:
+
+                                pipeline = Pipeline(
+                                    steps=[
+                                        (
+                                            "preprocessor",
+                                            preprocessor
+                                        ),
+                                        (
+                                            "model",
+                                            model
+                                        )
+                                    ]
+                                )
+
+                                pipeline.fit(
+                                    X_train,
+                                    y_train
+                                )
+
+                                prediction = pipeline.predict(
+                                    X_test
+                                )
+
+                                results.append(
+                                    {
+                                        "Model": name,
+                                        "Accuracy": round(
+                                            accuracy_score(
+                                                y_test,
+                                                prediction
+                                            ),
+                                            4
+                                        ),
+                                        "Precision": round(
+                                            precision_score(
+                                                y_test,
+                                                prediction,
+                                                average="weighted",
+                                                zero_division=0
+                                            ),
+                                            4
+                                        ),
+                                        "Recall": round(
+                                            recall_score(
+                                                y_test,
+                                                prediction,
+                                                average="weighted",
+                                                zero_division=0
+                                            ),
+                                            4
+                                        ),
+                                        "F1 Score": round(
+                                            f1_score(
+                                                y_test,
+                                                prediction,
+                                                average="weighted",
+                                                zero_division=0
+                                            ),
+                                            4
+                                        )
+                                    }
+                                )
+
+                            except Exception as error:
+
+                                st.warning(
+                                    f"{name} failed: {error}"
+                                )
+
+                        if results:
+
+                            st.dataframe(
+                                pd.DataFrame(results),
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+
+                # =========================================
+                # REGRESSION
+                # =========================================
+
+                else:
+
+                    X_train, X_test, y_train, y_test = (
+                        train_test_split(
+                            X,
+                            y,
+                            test_size=0.20,
+                            random_state=42
+                        )
+                    )
+
+                    models = {
+                        "Linear Regression":
+                            LinearRegression(),
+
+                        "Random Forest":
+                            RandomForestRegressor(
+                                n_estimators=150,
+                                random_state=42
+                            ),
+
+                        "Gradient Boosting":
+                            GradientBoostingRegressor(
+                                random_state=42
+                            )
+                    }
+
+                    results = []
+
+                    for name, model in models.items():
+
+                        try:
+
+                            pipeline = Pipeline(
+                                steps=[
+                                    (
+                                        "preprocessor",
+                                        preprocessor
+                                    ),
+                                    (
+                                        "model",
+                                        model
+                                    )
+                                ]
+                            )
+
+                            pipeline.fit(
+                                X_train,
+                                y_train
+                            )
+
+                            prediction = pipeline.predict(
+                                X_test
+                            )
+
+                            mae = mean_absolute_error(
+                                y_test,
+                                prediction
+                            )
+
+                            rmse = np.sqrt(
+                                mean_squared_error(
+                                    y_test,
+                                    prediction
+                                )
+                            )
+
+                            r2 = r2_score(
+                                y_test,
+                                prediction
+                            )
+
+                            results.append(
+                                {
+                                    "Model": name,
+                                    "MAE": round(
+                                        mae,
+                                        4
+                                    ),
+                                    "RMSE": round(
+                                        rmse,
+                                        4
+                                    ),
+                                    "R²": round(
+                                        r2,
+                                        4
+                                    )
+                                }
+                            )
+
+                        except Exception as error:
+
+                            st.warning(
+                                f"{name} failed: {error}"
+                            )
+
+                    if results:
+
+                        st.dataframe(
+                            pd.DataFrame(results),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+
+# =========================================================
+# FOOTER
+# =========================================================
+
+st.divider()
+
+st.caption(
+    "🤖 CSV Chat AI | Dynamic CSV Analysis | Statistics | Visualization | Machine Learning"
+)
